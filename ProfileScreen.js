@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext, useCallback } from 'react'; 
 import {
   View,
   Text,
@@ -10,10 +10,17 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation, useFocusEffect } from '@react-navigation/native'; 
+import { CalorieContext } from './CalorieContext'; 
+import * as Progress from 'react-native-progress'; // 🛑 แก้ไขการ Import
 
-const API_KEY = "T45MQ8GXHh42i+FPahLw8w==5VfSJjzUozRvT9DW"; // 🔑 ใส่ API Key ที่ได้จาก API Ninjas
+const API_KEY = "T45MQ8GXHh42i+FPahLw8w==5VfSJjzUozRvT9DW";
+const BASE_URL = 'http://192.168.0.102:3000'; 
 
 const ProfileScreen = () => {
+  const navigation = useNavigation();
+  const { authToken, setAuthToken } = useContext(CalorieContext);
+  
   const [profile, setProfile] = useState({
     weight: '',
     height: '',
@@ -22,20 +29,81 @@ const ProfileScreen = () => {
     bmr: 0,
   });
   const [loading, setLoading] = useState(false);
+  const [isApiLoading, setIsApiLoading] = useState(true);
 
-  useEffect(() => {
-    loadProfile();
-  }, []);
+  const getAuthHeaders = () => ({
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${authToken}`,
+  });
 
-  const loadProfile = async () => {
+  const loadProfileFromApi = useCallback(async () => {
+    if (!authToken) {
+      setIsApiLoading(false);
+      return; 
+    }
+    
+    setIsApiLoading(true);
     try {
-      const raw = await AsyncStorage.getItem('userData');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setProfile(parsed);
+      const res = await fetch(`${BASE_URL}/profile`, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      });
+
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+             await AsyncStorage.removeItem('userToken');
+             setAuthToken(null);
+             Alert.alert("Session Expired", "Please log in again.");
+             return;
+        }
+        throw new Error(`Failed to fetch profile (Status: ${res.status})`);
       }
+      
+      const data = await res.json();
+      
+      setProfile({
+        weight: data.weight ? String(data.weight) : '',
+        height: data.height ? String(data.height) : '',
+        age: data.age ? String(data.age) : '',
+        gender: data.gender || '',
+        bmr: data.bmr || 0,
+      });
+
     } catch (err) {
-      console.error('Load profile error:', err);
+      console.error('Load profile from API error:', err);
+      Alert.alert('ผิดพลาด', 'ไม่สามารถดึงข้อมูลโปรไฟล์ได้');
+    } finally {
+      setIsApiLoading(false);
+    }
+  }, [authToken]); 
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProfileFromApi(); 
+      return () => {};
+    }, [loadProfileFromApi])
+  );
+
+  const saveProfileToApi = async (updatedData) => {
+    try {
+      const res = await fetch(`${BASE_URL}/profile`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(updatedData),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || 'Failed to save profile.');
+      }
+
+      await loadProfileFromApi();
+      Alert.alert('สำเร็จ', 'บันทึกโปรไฟล์เรียบร้อยแล้ว');
+
+    } catch (err) {
+      console.error('Save profile to API error:', err.message);
+      Alert.alert('ผิดพลาด', `ไม่สามารถบันทึกข้อมูลได้: ${err.message}`);
+      throw err;
     }
   };
 
@@ -44,22 +112,56 @@ const ProfileScreen = () => {
       Alert.alert('ข้อมูลไม่ครบ', 'กรุณากรอกข้อมูลให้ครบ');
       return;
     }
+    if (!authToken) {
+       Alert.alert('ผิดพลาด', 'กรุณาเข้าสู่ระบบก่อนบันทึกข้อมูล');
+       return;
+    }
 
     setLoading(true);
     try {
       const updated = { ...profile };
+      
       await fetchBMR(updated);
-      await AsyncStorage.setItem('userData', JSON.stringify(updated));
-      setProfile(updated);
-      Alert.alert('สำเร็จ', 'บันทึกโปรไฟล์เรียบร้อยแล้ว');
+
+      await saveProfileToApi({
+        weight: parseFloat(updated.weight),
+        height: parseFloat(updated.height),
+        age: parseInt(updated.age),
+        gender: updated.gender,
+        bmr: updated.bmr,
+      });
+      
     } catch (err) {
-      console.error('Save profile error:', err);
-      Alert.alert('ผิดพลาด', 'ไม่สามารถบันทึกข้อมูลได้');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleLogout = async () => {
+    Alert.alert(
+      "ออกจากระบบ",
+      "คุณแน่ใจหรือไม่ว่าต้องการออกจากระบบ?",
+      [
+        {
+          text: "ยกเลิก",
+          style: "cancel"
+        },
+        {
+          text: "ใช่, ออกจากระบบ",
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem('userToken');
+              setAuthToken(null); 
+              
+            } catch (e) {
+              console.error('Logout error:', e);
+            }
+          }
+        }
+      ]
+    );
+  };
+  
   const fetchBMR = async (data) => {
     const { weight, height, age, gender } = data;
     try {
@@ -92,6 +194,17 @@ const ProfileScreen = () => {
       return Math.round(10 * w + 6.25 * h - 5 * a - 161);
     }
   };
+
+
+  if (isApiLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        {/* 🛑 เรียกใช้งานอย่างถูกต้อง */}
+        <Progress.CircleSnail size={50} color={['#4ECDC4', '#F7B801', '#FF6B6B']} thickness={4} />
+        <Text style={styles.loadingText}>กำลังโหลดข้อมูลโปรไฟล์...</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
@@ -149,6 +262,14 @@ const ProfileScreen = () => {
         >
           {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btText}>บันทึก</Text>}
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.logoutBt]}
+          onPress={handleLogout}
+        >
+          <Text style={styles.logoutBtText}>ออกจากระบบ</Text>
+        </TouchableOpacity>
+
       </View>
     </ScrollView>
   );
@@ -156,6 +277,17 @@ const ProfileScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#2A2D47' },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#2A2D47',
+  },
+  loadingText: {
+    color: '#4ECDC4',
+    marginTop: 15,
+    fontSize: 16,
+  },
   title: { fontSize: 24, color: '#fff', margin: 20, fontWeight: 'bold' },
   form: { backgroundColor: '#3A3D5C', margin: 15, padding: 20, borderRadius: 12 },
   label: { color: '#8B8FA3', marginBottom: 6 },
@@ -181,6 +313,18 @@ const styles = StyleSheet.create({
   bmrText: { color: '#00D4AA', fontSize: 18, fontWeight: 'bold', marginBottom: 15 },
   bt: { backgroundColor: '#00D4AA', padding: 15, borderRadius: 10, alignItems: 'center' },
   btText: { color: '#fff', fontWeight: 'bold' },
+
+  logoutBt: {
+    backgroundColor: '#FF6B6B',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 15,
+  },
+  logoutBtText: {
+    color: '#fff',
+    fontWeight: 'bold'
+  },
 });
 
 export default ProfileScreen;
