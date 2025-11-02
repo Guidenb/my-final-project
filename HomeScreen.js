@@ -17,7 +17,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { CalorieContext } from './CalorieContext';
 
 const HomeScreen = ({ navigation }) => {
-  const { dailyCalorieTarget, setDailyCalorieTarget, todayConsumedCalories, setTodayConsumedCalories } = useContext(CalorieContext);
+  // 🔥 ดึง profile จาก Context
+  const { 
+    dailyCalorieTarget, 
+    setDailyCalorieTarget, 
+    todayConsumedCalories, 
+    setTodayConsumedCalories,
+    profile: contextProfile // ดึง profile จาก Context
+  } = useContext(CalorieContext);
   
   const [userInfo, setUserInfo] = useState({
     weight: '',
@@ -44,6 +51,13 @@ const HomeScreen = ({ navigation }) => {
     { value: 1.725, text: 'ออกกำลังกายหนัก 6-7 วัน/สัปดาห์ (1.725)' },
     { value: 1.9, text: 'ออกกำลังกายหนักมาก/งานหนัก (1.9)' },
   ];
+
+  // 🔥 อัพเดท userInfo ทุกครั้งที่ contextProfile เปลี่ยน
+  useEffect(() => {
+    if (contextProfile && contextProfile.bmr > 0) {
+      setUserInfo(contextProfile);
+    }
+  }, [contextProfile]);
 
   useFocusEffect(
     useCallback(() => {
@@ -73,13 +87,17 @@ const HomeScreen = ({ navigation }) => {
 
   const loadData = async () => {
     try {
+      // 🔥 โหลดจาก AsyncStorage (เป็น backup)
       const userData = await AsyncStorage.getItem('userData');
       const homeData = await AsyncStorage.getItem('homeData');
       const mealData = await AsyncStorage.getItem('mealData');
 
       if (userData) {
         const data = JSON.parse(userData);
-        setUserInfo(data);
+        // 🔥 ถ้า Context ยังไม่มีข้อมูล ให้ใช้จาก AsyncStorage
+        if (!contextProfile || contextProfile.bmr === 0) {
+          setUserInfo(data);
+        }
       }
 
       if (homeData) {
@@ -214,7 +232,7 @@ const HomeScreen = ({ navigation }) => {
                   title="BMR"
                   value={userInfo.bmr}
                   unit="kcal"
-                  subtitle="จาก API"
+                  subtitle="จาก Profile"
                   color="#4ECDC4"
                 />
                 <CalorieCard
@@ -233,6 +251,16 @@ const HomeScreen = ({ navigation }) => {
                   status={calorieStatus}
                 />
               </View>
+
+              {/* 🔥 แสดงข้อความอัพเดทแบบเรียลไทม์ */}
+              {contextProfile && contextProfile.bmr > 0 && (
+                <View style={styles.realtimeIndicator}>
+                  <Ionicons name="checkmark-circle" size={16} color="#4ECDC4" />
+                  <Text style={styles.realtimeText}>
+                    ข้อมูลอัพเดทแบบเรียลไทม์จาก Profile
+                  </Text>
+                </View>
+              )}
 
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
@@ -387,6 +415,23 @@ const styles = StyleSheet.create({
   header: { padding: 20, paddingTop: 10 },
   headerTitle: { fontSize: 28, fontWeight: 'bold', color: 'white', marginBottom: 5 },
   headerSubtitle: { fontSize: 14, color: '#B0B0B0' },
+  realtimeIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 20,
+    marginBottom: 15,
+    backgroundColor: 'rgba(78, 205, 196, 0.2)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    gap: 8,
+  },
+  realtimeText: {
+    color: '#4ECDC4',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   noProfileContainer: {
     marginHorizontal: 20,
     marginTop: 40,
@@ -423,7 +468,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  cardsContainer: { flexDirection: 'row', paddingHorizontal: 20, marginBottom: 25, gap: 10 },
+  cardsContainer: { flexDirection: 'row', paddingHorizontal: 20, marginBottom: 15, gap: 10 },
   calorieCard: {
     flex: 1,
     backgroundColor: '#2C2C54',

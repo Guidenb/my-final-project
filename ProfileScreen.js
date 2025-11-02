@@ -12,14 +12,15 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useFocusEffect } from '@react-navigation/native'; 
 import { CalorieContext } from './CalorieContext'; 
-import * as Progress from 'react-native-progress'; // 🛑 แก้ไขการ Import
+import * as Progress from 'react-native-progress';
 
 const API_KEY = "T45MQ8GXHh42i+FPahLw8w==5VfSJjzUozRvT9DW";
 const BASE_URL = 'http://192.168.0.102:3000'; 
 
 const ProfileScreen = () => {
   const navigation = useNavigation();
-  const { authToken, setAuthToken } = useContext(CalorieContext);
+  // 🔥 เพิ่ม updateProfile จาก Context
+  const { authToken, setAuthToken, profile: contextProfile, updateProfile, loadProfileFromApi } = useContext(CalorieContext);
   
   const [profile, setProfile] = useState({
     weight: '',
@@ -36,7 +37,20 @@ const ProfileScreen = () => {
     'Authorization': `Bearer ${authToken}`,
   });
 
-  const loadProfileFromApi = useCallback(async () => {
+  // 🔥 โหลดข้อมูลจาก Context เมื่อเข้าหน้า
+  useFocusEffect(
+    useCallback(() => {
+      if (contextProfile && contextProfile.bmr > 0) {
+        setProfile(contextProfile);
+        setIsApiLoading(false);
+      } else {
+        loadProfileFromApiLocal();
+      }
+      return () => {};
+    }, [contextProfile])
+  );
+
+  const loadProfileFromApiLocal = async () => {
     if (!authToken) {
       setIsApiLoading(false);
       return; 
@@ -61,13 +75,15 @@ const ProfileScreen = () => {
       
       const data = await res.json();
       
-      setProfile({
+      const loadedProfile = {
         weight: data.weight ? String(data.weight) : '',
         height: data.height ? String(data.height) : '',
         age: data.age ? String(data.age) : '',
         gender: data.gender || '',
         bmr: data.bmr || 0,
-      });
+      };
+      
+      setProfile(loadedProfile);
 
     } catch (err) {
       console.error('Load profile from API error:', err);
@@ -75,14 +91,7 @@ const ProfileScreen = () => {
     } finally {
       setIsApiLoading(false);
     }
-  }, [authToken]); 
-
-  useFocusEffect(
-    useCallback(() => {
-      loadProfileFromApi(); 
-      return () => {};
-    }, [loadProfileFromApi])
-  );
+  };
 
   const saveProfileToApi = async (updatedData) => {
     try {
@@ -97,7 +106,15 @@ const ProfileScreen = () => {
         throw new Error(errorData.message || 'Failed to save profile.');
       }
 
-      await loadProfileFromApi();
+      // 🔥 บันทึกลง AsyncStorage
+      await AsyncStorage.setItem('userData', JSON.stringify(updatedData));
+      
+      // 🔥 อัพเดทไปยัง Context ทันที (จะทำให้ HomeScreen ได้รับค่าใหม่ทันที)
+      updateProfile(updatedData);
+      
+      // 🔥 โหลดข้อมูลจาก API อีกครั้งเพื่อยืนยัน
+      await loadProfileFromApi(authToken);
+      
       Alert.alert('สำเร็จ', 'บันทึกโปรไฟล์เรียบร้อยแล้ว');
 
     } catch (err) {
@@ -121,8 +138,13 @@ const ProfileScreen = () => {
     try {
       const updated = { ...profile };
       
+      // คำนวณ BMR
       await fetchBMR(updated);
 
+      // 🔥 อัพเดท local state
+      setProfile(updated);
+
+      // บันทึกไปยัง API และ Context
       await saveProfileToApi({
         weight: parseFloat(updated.weight),
         height: parseFloat(updated.height),
@@ -132,6 +154,7 @@ const ProfileScreen = () => {
       });
       
     } catch (err) {
+      console.error('Save error:', err);
     } finally {
       setLoading(false);
     }
@@ -151,6 +174,7 @@ const ProfileScreen = () => {
           onPress: async () => {
             try {
               await AsyncStorage.removeItem('userToken');
+              await AsyncStorage.removeItem('userData');
               setAuthToken(null); 
               
             } catch (e) {
@@ -199,7 +223,6 @@ const ProfileScreen = () => {
   if (isApiLoading) {
     return (
       <View style={styles.loadingContainer}>
-        {/* 🛑 เรียกใช้งานอย่างถูกต้อง */}
         <Progress.CircleSnail size={50} color={['#4ECDC4', '#F7B801', '#FF6B6B']} thickness={4} />
         <Text style={styles.loadingText}>กำลังโหลดข้อมูลโปรไฟล์...</Text>
       </View>
@@ -252,7 +275,11 @@ const ProfileScreen = () => {
         </View>
 
         {profile.bmr > 0 && (
-          <Text style={styles.bmrText}>BMR: {profile.bmr} kcal</Text>
+          <View style={styles.bmrContainer}>
+            <Text style={styles.bmrLabel}>BMR (Basal Metabolic Rate)</Text>
+            <Text style={styles.bmrText}>{profile.bmr} kcal/วัน</Text>
+            <Text style={styles.bmrDescription}>พลังงานที่ร่างกายใช้ในการดำรงชีวิตพื้นฐาน</Text>
+          </View>
         )}
 
         <TouchableOpacity
@@ -310,9 +337,32 @@ const styles = StyleSheet.create({
   genderButtonActive: { backgroundColor: '#00D4AA' },
   genderText: { color: '#8B8FA3', fontSize: 16 },
   genderTextActive: { color: '#fff', fontWeight: 'bold' },
-  bmrText: { color: '#00D4AA', fontSize: 18, fontWeight: 'bold', marginBottom: 15 },
+  bmrContainer: {
+    backgroundColor: '#4A4D6C',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#00D4AA',
+  },
+  bmrLabel: {
+    color: '#8B8FA3',
+    fontSize: 12,
+    marginBottom: 5,
+  },
+  bmrText: { 
+    color: '#00D4AA', 
+    fontSize: 24, 
+    fontWeight: 'bold', 
+    marginBottom: 5,
+  },
+  bmrDescription: {
+    color: '#8B8FA3',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
   bt: { backgroundColor: '#00D4AA', padding: 15, borderRadius: 10, alignItems: 'center' },
-  btText: { color: '#fff', fontWeight: 'bold' },
+  btText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
 
   logoutBt: {
     backgroundColor: '#FF6B6B',

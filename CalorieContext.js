@@ -22,6 +22,11 @@ export const CalorieProvider = ({ children }) => {
     bmr: 0,
   });
 
+  // 🔥 ฟังก์ชันอัพเดท Profile ที่จะใช้ใน ProfileScreen
+  const updateProfile = useCallback((newProfile) => {
+    setProfile(newProfile);
+  }, []);
+
   // 1. Logic ดึงข้อมูล Profile จาก Backend (ใช้ useCallback)
   const loadProfileFromApi = useCallback(async (token) => {
     // ถ้าไม่มี Token หรือ Token เป็น null/undefined ให้ตั้งค่า Profile เป็นค่าเริ่มต้น
@@ -42,16 +47,22 @@ export const CalorieProvider = ({ children }) => {
 
       if (res.ok) {
         const data = await res.json();
-        const profileData = data.profile || {};
+        const profileData = data.profile || data; // รองรับทั้ง { profile: {...} } และ {...}
         
         // แปลงค่าตัวเลขเป็น String ก่อนนำไปใส่ใน State (Fix TextInput issue)
-        setProfile({
+        const newProfile = {
           weight: profileData.weight ? String(profileData.weight) : '',
           height: profileData.height ? String(profileData.height) : '',
           age: profileData.age ? String(profileData.age) : '',
           gender: profileData.gender || '',
           bmr: profileData.bmr || 0,
-        });
+        };
+        
+        setProfile(newProfile);
+        
+        // 🔥 บันทึกลง AsyncStorage เพื่อให้ HomeScreen ดึงได้
+        await AsyncStorage.setItem('userData', JSON.stringify(newProfile));
+        
       } else if (res.status === 404) {
          // 404 อาจหมายถึงผู้ใช้ยังไม่เคยสร้าง Profile
          setProfile({ weight: '', height: '', age: '', gender: '', bmr: 0 });
@@ -99,10 +110,10 @@ export const CalorieProvider = ({ children }) => {
         setAuthToken,
         profile,
         setProfile,
+        updateProfile, // 🔥 ฟังก์ชันใหม่สำหรับอัพเดท Profile
         loadProfileFromApi, // ฟังก์ชันสำหรับโหลด/รีเฟรชข้อมูล Profile (ใช้ใน ProfileScreen)
       }}
     >
       {children}
     </CalorieContext.Provider>
-  );
-};
+  );};
